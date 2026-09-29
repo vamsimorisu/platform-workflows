@@ -1,0 +1,37 @@
+name: Self-test
+
+# PR-only on purpose: the docker job never pushes on pull_request events.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+  packages: write
+  id-token: write
+  security-events: write
+
+concurrency:
+  group: selftest-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  node:
+    uses: ./.github/workflows/ci-cd.yml
+    with:
+      language: node
+      working-directory: fixtures/node-app
+      docker-enabled: true
+      docker-context: fixtures/node-app
+      require-reviewer: false
+    secrets: inherit
+  python:
+    uses: ./.github/workflows/ci-cd.yml
+    with:
+      language: python
+      working-directory: fixtures/python-app
+      docker-enabled: true
+      docker-context: fixtures/python-app
+      require-reviewer: false
+    secrets: inherit

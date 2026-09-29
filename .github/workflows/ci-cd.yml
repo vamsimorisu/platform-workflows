@@ -1,0 +1,135 @@
+name: Org CI/CD
+
+# Orchestrator: the single entrypoint callers use. It only wires the stage workflows together.
+on:
+  workflow_call:
+    inputs:
+      language:
+        description: "python | node"
+        type: string
+        required: true
+      language-version:
+        type: string
+        default: ""
+      working-directory:
+        type: string
+        default: "."
+      package-manager:
+        type: string
+        default: "npm"
+      lint-command:
+        type: string
+        default: ""
+      test-command:
+        type: string
+        default: ""
+      build-command:
+        type: string
+        default: ""
+      docker-enabled:
+        type: boolean
+        default: false
+      dockerfile:
+        type: string
+        default: "Dockerfile"
+      docker-context:
+        type: string
+        default: "."
+      deploy-enabled:
+        type: boolean
+        default: false
+      deploy-command:
+        type: string
+        default: ""
+      required-labels-any:
+        type: string
+        default: "feature,bug,chore,docs,breaking"
+      allowed-base-branches:
+        type: string
+        default: "main"
+      branch-pattern:
+        type: string
+        default: '^(feature|fix|chore|docs|hotfix|release)/[a-z0-9._-]+$'
+      title-pattern:
+        type: string
+        default: '^(feat|fix|chore|docs|refactor|test|ci|perf|build)(\([\w-]+\))?!?: .{3,}$'
+      require-reviewer:
+        type: boolean
+        default: true
+    secrets:
+      REGISTRY_USERNAME: { required: false }
+      REGISTRY_PASSWORD: { required: false }
+      SLACK_WEBHOOK_URL: { required: false }
+    outputs:
+      image-digest:
+        value: ${{ jobs.docker.outputs.digest }}
+
+# Each calling job below declares the permissions its stage needs.
+# They are capped by the CALLER's permissions block.
+permissions:
+  contents: read
+
+jobs:
+  pr-contract:
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/pr-contract.yml
+    permissions:
+      contents: read
+      pull-requests: read
+    with:
+      required-labels-any: ${{ inputs.required-labels-any }}
+      allowed-base-branches: ${{ inputs.allowed-base-branches }}
+      branch-pattern: ${{ inputs.branch-pattern }}
+      title-pattern: ${{ inputs.title-pattern }}
+      require-reviewer: ${{ inputs.require-reviewer }}
+
+  pr-advisory:
+    if: github.event_name == 'pull_request' && !contains(fromJSON('["labeled","unlabeled"]'), github.event.action)
+    uses: ./.github/workflows/pr-advisory.yml
+    permissions:
+      contents: read
+      pull-requests: write
+
+  ci:
+    # Skip on label/description edits: those only need the contract re-check.
+    if: ${{ !(github.event_name == 'pull_request' && contains(fromJSON('["labeled","unlabeled","edited"]'), github.event.action)) }}
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+    with:
+      language: ${{ inputs.language }}
+      language-version: ${{ inputs.language-version }}
+      working-directory: ${{ inputs.working-directory }}
+      package-manager: ${{ inputs.package-manager }}
+      lint-command: ${{ inputs.lint-command }}
+      test-command: ${{ inputs.test-command }}
+      build-command: ${{ inputs.build-command }}
+
+  docker:
+    if: ${{ inputs.docker-enabled && !(github.event_name == 'pull_request' && contains(fromJSON('["labeled","unlabeled","edited"]'), github.event.action)) }}
+    needs: ci
+    uses: ./.github/workflows/docker.yml
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+    with:
+      dockerfile: ${{ inputs.dockerfile }}
+      docker-context: ${{ inputs.docker-context }}
+    secrets: inherit
+
+  deploy:
+    needs: [ci, docker]
+    if: >-
+      ${{ !cancelled() && inputs.deploy-enabled && github.event_name == 'push'
+          && needs.ci.result == 'success'
+          && (needs.docker.result == 'success' || needs.docker.result == 'skipped')
+          && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    uses: ./.github/workflows/deploy.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      image-digest: ${{ needs.docker.outputs.digest }}
+      deploy-command: ${{ inputs.deploy-command }}
+    secrets: inherit

@@ -1,0 +1,53 @@
+name: PR advisory
+
+# Non-blocking guidance. The orchestrator also sets continue-on-error on the calling job.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const files = await github.paginate(github.rest.pulls.listFiles,
+              { ...context.repo, pull_number: pr.number, per_page: 100 });
+            const tips = [];
+            const changed = files.reduce((n, f) => n + f.additions + f.deletions, 0);
+            if (changed > 800) tips.push(`⚠️ Large PR (${changed} lines changed). Consider splitting it.`);
+
+            const src = files.filter(f => /\.(py|js|ts|tsx|jsx)$/.test(f.filename) && !/(test|spec)/i.test(f.filename));
+            const tests = files.filter(f => /(test|spec)/i.test(f.filename));
+            if (src.length && !tests.length) tips.push('🧪 Source changed but no tests were touched.');
+
+            if (files.some(f => /(^|\/)(package\.json|pyproject\.toml|requirements.*\.txt)$/.test(f.filename)) &&
+                !files.some(f => /(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|poetry\.lock|uv\.lock)$/.test(f.filename)))
+              tips.push('🔒 Dependency manifest changed without a lockfile update.');
+
+            if (files.some(f => /Dockerfile/i.test(f.filename)))
+              tips.push('🐳 Dockerfile changed: check base-image pinning, non-root user, and .dockerignore.');
+
+            if (files.some(f => /\.github\/workflows\//.test(f.filename)))
+              tips.push('⚙️ Workflow files changed: confirm actions are pinned and permissions are least-privilege.');
+
+            const marker = '<!-- org-pr-advisory -->';
+            const body = `${marker}\n### 🤖 PR advisory (non-blocking)\n` +
+              (tips.length ? tips.map(t => `- ${t}`).join('\n') : '✅ No advisories. Nice PR.') +
+              `\n\n_Source: platform-workflows._`;
+            try {
+              const { data: comments } = await github.rest.issues.listComments(
+                { ...context.repo, issue_number: pr.number });
+              const mine = comments.find(c => c.body?.startsWith(marker));
+              if (mine) await github.rest.issues.updateComment({ ...context.repo, comment_id: mine.id, body });
+              else await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number, body });
+            } catch (e) { core.warning(`Could not comment (fork PR?): ${e.message}`); }
+            await core.summary.addRaw(body).write();
+      - uses: actions/dependency-review-action@v4
+        with: { fail-on-severity: high }
+        continue-on-error: true

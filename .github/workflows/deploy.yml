@@ -1,0 +1,44 @@
+name: Deploy
+
+on:
+  workflow_call:
+    inputs:
+      image-digest:
+        type: string
+        default: ""
+      deploy-command:
+        type: string
+        default: ""
+    secrets:
+      SLACK_WEBHOOK_URL: { required: false }
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ startsWith(github.ref, 'refs/tags/v') && 'production' || 'staging' }}
+    concurrency:
+      group: deploy-${{ github.repository }}-${{ startsWith(github.ref, 'refs/tags/v') && 'production' || 'staging' }}
+      cancel-in-progress: false    # never cancel a deploy mid-flight
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4   # swap for azure/login or google-github-actions/auth
+        with:
+          role-to-assume: ${{ vars.DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Deploy
+        env:
+          IMAGE_DIGEST: ${{ inputs.image-digest }}
+          DEPLOY_ENV: ${{ startsWith(github.ref, 'refs/tags/v') && 'production' || 'staging' }}
+        run: ${{ inputs.deploy-command || './scripts/deploy.sh "$DEPLOY_ENV" "$IMAGE_DIGEST"' }}
+      - name: Notify
+        if: always() && env.SLACK_WEBHOOK_URL != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          curl -sS -X POST -H 'Content-type: application/json' \
+            --data "{\"text\":\"${{ github.repository }} -> ${{ job.status }} (${{ github.ref_name }})\"}" "$SLACK_WEBHOOK_URL"

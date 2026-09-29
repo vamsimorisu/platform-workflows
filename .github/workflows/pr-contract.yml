@@ -1,0 +1,71 @@
+name: PR contract
+
+on:
+  workflow_call:
+    inputs:
+      required-labels-any:
+        type: string
+        default: "feature,bug,chore,docs,breaking"
+      allowed-base-branches:
+        type: string
+        default: "main"
+      branch-pattern:
+        type: string
+        default: '^(feature|fix|chore|docs|hotfix|release)/[a-z0-9._-]+$'
+      title-pattern:
+        type: string
+        default: '^(feat|fix|chore|docs|refactor|test|ci|perf|build)(\([\w-]+\))?!?: .{3,}$'
+      require-reviewer:
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        env:
+          REQUIRED_LABELS: ${{ inputs.required-labels-any }}
+          BASE_BRANCHES: ${{ inputs.allowed-base-branches }}
+          BRANCH_PATTERN: ${{ inputs.branch-pattern }}
+          TITLE_PATTERN: ${{ inputs.title-pattern }}
+          REQUIRE_REVIEWER: ${{ inputs.require-reviewer }}
+        script: |
+          // Untrusted values (title, branch) are read from the payload, never interpolated into shell.
+          const pr = context.payload.pull_request;
+          const errors = [];
+          const split = s => s.split(',').map(x => x.trim()).filter(Boolean);
+
+          if (pr.draft) core.notice('Draft PR: contract checked, but not required to pass yet.');
+
+          if (!new RegExp(process.env.TITLE_PATTERN).test(pr.title))
+            errors.push('Title must follow Conventional Commits, e.g. "feat(api): add pagination".');
+
+          if (!new RegExp(process.env.BRANCH_PATTERN).test(pr.head.ref))
+            errors.push(`Branch "${pr.head.ref}" must match ${process.env.BRANCH_PATTERN}`);
+
+          if (!split(process.env.BASE_BRANCHES).includes(pr.base.ref))
+            errors.push(`PRs must target one of: ${process.env.BASE_BRANCHES} (got "${pr.base.ref}")`);
+
+          const labels = pr.labels.map(l => l.name);
+          if (!split(process.env.REQUIRED_LABELS).some(l => labels.includes(l)))
+            errors.push(`Add at least one label of: ${process.env.REQUIRED_LABELS}`);
+
+          if (!pr.body || pr.body.trim().length < 30)
+            errors.push('PR description is empty or too short (what / why / how tested).');
+
+          if (process.env.REQUIRE_REVIEWER === 'true') {
+            const { data: reviews } = await github.rest.pulls.listReviews({
+              ...context.repo, pull_number: pr.number });
+            const has = pr.requested_reviewers.length + pr.requested_teams.length + reviews.length > 0;
+            if (!has) errors.push('Request at least one reviewer (CODEOWNERS should auto-request).');
+          }
+
+          if (errors.length) {
+            await core.summary.addHeading('PR contract failed').addList(errors).write();
+            core.setFailed(errors.join('\n'));
+          }

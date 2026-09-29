@@ -1,0 +1,29 @@
+name: CI/CD
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled, ready_for_review]
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+# The reusable workflow can never exceed these, so callers must grant them.
+permissions:
+  contents: read
+  pull-requests: write
+  packages: write
+  id-token: write
+  security-events: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  pipeline:
+    uses: __ORG__/platform-workflows/.github/workflows/ci-cd.yml@v1
+    with:
+      language: node
+      docker-enabled: true
+      deploy-enabled: true
+    secrets: inherit
