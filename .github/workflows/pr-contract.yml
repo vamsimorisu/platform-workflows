@@ -34,6 +34,7 @@ jobs:
           BRANCH_PATTERN: ${{ inputs.branch-pattern }}
           TITLE_PATTERN: ${{ inputs.title-pattern }}
           REQUIRE_REVIEWER: ${{ inputs.require-reviewer }}
+      with:  
         script: |
           // Untrusted values (title, branch) are read from the payload, never interpolated into shell.
           const pr = context.payload.pull_request;
