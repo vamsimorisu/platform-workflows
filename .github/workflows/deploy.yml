@@ -11,6 +11,16 @@ on:
         default: ""
     secrets:
       SLACK_WEBHOOK_URL: { required: false }
+  workflow_dispatch:
+    inputs:
+      image-digest:
+        required: false
+        type: string
+        default: ""
+      deploy-command:
+        required: false
+        type: string
+        default: "./scripts/deploy.sh \"$DEPLOY_ENV\" \"$IMAGE_DIGEST\""
 
 permissions:
   contents: read

@@ -3,6 +3,7 @@ name: PR advisory
 # Non-blocking guidance. The orchestrator also sets continue-on-error on the calling job.
 on:
   workflow_call:
+  workflow_dispatch:
 
 permissions:
   contents: read

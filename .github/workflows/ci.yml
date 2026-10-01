@@ -26,6 +26,39 @@ on:
       build-command:
         type: string
         default: ""
+  workflow_dispatch:
+    inputs:
+      language:
+        description: "python | node"
+        required: true
+        type: choice
+        options: [python, node]
+      language-version:
+        required: false
+        type: string
+        default: ""
+      working-directory:
+        required: false
+        type: string
+        default: "."
+      package-manager:
+        description: "node only: npm | pnpm | yarn"
+        required: false
+        type: choice
+        options: [npm, pnpm, yarn]
+        default: npm
+      lint-command:
+        required: false
+        type: string
+        default: ""
+      test-command:
+        required: false
+        type: string
+        default: ""
+      build-command:
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read

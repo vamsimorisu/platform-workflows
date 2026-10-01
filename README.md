@@ -14,7 +14,7 @@ Then: create the teams `platform-team` and `security`, set the production review
 
 ## Use it in a repo
 
-Copy `callers/node.yml` or `callers/python.yml` to `.github/workflows/ci-cd.yml` (or run `ORG=your-org ./scripts/onboard.sh <repo> <node|python>`).
+Copy `callers/node.yml` or `callers/python.yml` to `.github/workflows/ci-cd.yml` to run the full pipeline. The templates enable Docker and deploy; set either input to `false` to skip that stage. For CI-only checks, call `ci.yml` directly as shown below, or run `ORG=your-org ./scripts/onboard.sh <repo> <node|python>`.
 
 ```yaml
 jobs:
