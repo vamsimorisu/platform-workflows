@@ -15,6 +15,16 @@ on:
     outputs:
       digest:
         value: ${{ jobs.run.outputs.digest }}
+  workflow_dispatch:
+    inputs:
+      dockerfile:
+        required: false
+        type: string
+        default: Dockerfile
+      docker-context:
+        required: false
+        type: string
+        default: "."
 
 permissions:
   contents: read
@@ -58,7 +68,7 @@ jobs:
           cache-to: type=gha,mode=max
       - name: Scan image
         if: env.PUSH == 'true'
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.28.0
         with:
           image-ref: ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}
           severity: CRITICAL,HIGH

@@ -2,6 +2,7 @@ name: Self-test
 
 # PR-only on purpose: the docker job never pushes on pull_request events.
 on:
+  workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened, edited, labeled, unlabeled]
 
