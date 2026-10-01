@@ -4,7 +4,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, edited, labeled, unlabeled, ready_for_review]
   push:
-    branches: [main]
+    branches: [main,develop]
     tags: ["v*"]
 
 # The reusable workflow can never exceed these, so callers must grant them.
