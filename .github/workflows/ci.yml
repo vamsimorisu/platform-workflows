@@ -13,6 +13,10 @@ on:
       working-directory:
         type: string
         default: "."
+      runner:
+        description: "GitHub Actions runner label"
+        type: string
+        default: "ubuntu-latest"
       package-manager:
         description: "node only: npm | pnpm | yarn"
         type: string
@@ -41,6 +45,11 @@ on:
         required: false
         type: string
         default: "."
+      runner:
+        description: "GitHub Actions runner label"
+        required: false
+        type: string
+        default: "ubuntu-latest"
       package-manager:
         description: "node only: npm | pnpm | yarn"
         required: false
@@ -65,7 +74,7 @@ permissions:
 
 jobs:
   run:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 30
     defaults:
       run:

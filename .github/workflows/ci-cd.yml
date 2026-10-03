@@ -14,6 +14,10 @@ on:
       working-directory:
         type: string
         default: "."
+      runner:
+        description: "GitHub Actions runner label for the CI stage"
+        type: string
+        default: "ubuntu-latest"
       package-manager:
         type: string
         default: "npm"
@@ -100,6 +104,7 @@ jobs:
       language: ${{ inputs.language }}
       language-version: ${{ inputs.language-version }}
       working-directory: ${{ inputs.working-directory }}
+      runner: ${{ inputs.runner }}
       package-manager: ${{ inputs.package-manager }}
       lint-command: ${{ inputs.lint-command }}
       test-command: ${{ inputs.test-command }}

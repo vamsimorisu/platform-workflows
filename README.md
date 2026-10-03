@@ -4,17 +4,13 @@ Org-wide reusable CI/CD for Python and Node.js repos: PR contract, PR advisory, 
 
 ## Publish (one time)
 
-```bash
-ORG=your-org ./scripts/bootstrap.sh
-```
-
-This replaces `__ORG__`, creates an **internal** repo, allows org-wide workflow access, and tags `v1.0.0` (which moves the floating `v1` tag).
+Create an **internal** repository in your organization, push this repository to it, and allow organization repositories to access its workflows in the repository's Actions settings. Push the `v1.0.0` tag to trigger `release.yml`, which moves the floating `v1` tag.
 
 Then: create the teams `platform-team` and `security`, set the production reviewer team id in `policy/env-production.json`, and apply `policy/ruleset.json` (starts in `evaluate` mode).
 
 ## Use it in a repo
 
-Copy `callers/node.yml` or `callers/python.yml` to `.github/workflows/ci-cd.yml` to run the full pipeline. The templates enable Docker and deploy; set either input to `false` to skip that stage. For CI-only checks, call `ci.yml` directly as shown below, or run `ORG=your-org ./scripts/onboard.sh <repo> <node|python>`.
+Copy `callers/node.yml` or `callers/python.yml` to `.github/workflows/ci-cd.yml` to run CI and Docker builds. Deployment is disabled in the templates; to enable it, set `deploy-enabled: true` and provide a repository-specific `deploy-command`. For CI-only checks, call `ci.yml` directly as shown below.
 
 ```yaml
 jobs:
@@ -34,7 +30,7 @@ jobs:
 | `package-manager` | `npm` | `npm`, `pnpm`, `yarn` |
 | `lint-command` / `test-command` / `build-command` | org default | escape hatches |
 | `docker-enabled`, `dockerfile`, `docker-context` | `false`, `Dockerfile`, `.` | image build (push only on main/tags) |
-| `deploy-enabled`, `deploy-command` | `false`, `./scripts/deploy.sh` | staging on `main`, production on `v*` tags |
+| `deploy-enabled`, `deploy-command` | `false`, empty | Deploy on `main` to staging or on `v*` tags to production; set a repository-specific command |
 | `required-labels-any`, `allowed-base-branches`, `branch-pattern`, `title-pattern`, `require-reviewer` | see workflow | PR contract |
 
 ## Secrets and variables
