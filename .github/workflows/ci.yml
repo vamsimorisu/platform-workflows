@@ -102,46 +102,7 @@ jobs:
         run: |
           ${{ inputs.lint-command || 'pip install ruff && ruff check . && ruff format --check .' }}
           ${{ inputs.test-command || 'pip install pytest pytest-cov && pytest --cov --cov-report=xml' }}
-          ${{ inputs.build-command || 'if [ -f pyproject.toml ]; then pip install build && python -m build; else python -m compileall -q .; fi' }}          - name: Setup Python
-            if: inputs.language == 'python'
-            uses: actions/setup-python@v5
-            with:
-              python-version: ${{ inputs.language-version || '3.12' }}
-    
-          - name: Install (python)
-            if: inputs.language == 'python'
-            run: |
-              python -m pip install --upgrade pip
-              if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-              if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-              if [ -f pyproject.toml ]; then pip install -e ".[dev]" || pip install -e .; fi
-    
-          - name: Lint, test, and build (python)
-            if: inputs.language == 'python'
-            run: |
-              ${{ inputs.lint-command || 'pip install ruff && ruff check . && ruff format --check .' }}
-              ${{ inputs.test-command || 'pip install pytest pytest-cov && pytest --cov --cov-report=xml' }}
-              ${{ inputs.build-command || 'if [ -f pyproject.toml ]; then pip install build && python -m build; else python -m compileall -q .; fi' }}
-        steps:
-          - name: Setup Python
-            uses: actions/setup-python@v5
-            with:
-              python-version: ${{ inputs.language-version || '3.12' }}
-
-          - name: Install (python)
-            run: |
-              python -m pip install --upgrade pip
-              if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-              if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-              if [ -f pyproject.toml ]; then pip install -e ".[dev]" || pip install -e .; fi
-
-          - name: Lint (python)
-            run: ${{ inputs.lint-command || 'pip install ruff && ruff check . && ruff format --check .' }}
-
-          - name: Test (python)
-            run: ${{ inputs.test-command || 'pip install pytest pytest-cov && pytest --cov --cov-report=xml' }}
-
-          
+          ${{ inputs.build-command || 'if [ -f pyproject.toml ]; then pip install build && python -m build; else python -m compileall -q .; fi' }}
 
       # ---- Node ----
       - name: Setup pnpm
