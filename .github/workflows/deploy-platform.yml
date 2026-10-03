@@ -1,0 +1,44 @@
+name: Platform deploy
+
+on:
+  push:
+    branches: [develop, main]
+
+concurrency:
+  group: platform-deploy-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  deploy-dev:
+    if: github.ref == 'refs/heads/develop'
+    uses: ./.github/workflows/reusable-deploy.yml
+    with:
+      environment: dev
+      runner_label: dev-linux-arm
+      image_tag: ${{ github.sha }}
+      aws_secret_id: dev
+      image_name_backend: ${{ vars.IMAGE_NAME_BACKEND }}
+      image_name_frontend: ${{ vars.IMAGE_NAME_FRONTEND }}
+      image_name_model: ${{ vars.IMAGE_NAME_MODEL }}
+      stutter_model_port: ${{ vars.STUTTER_MODEL_PORT }}
+      api_url: ${{ vars.API_URL_DEV }}
+      frontend_origin: ${{ vars.FRONTEND_ORIGIN_DEV }}
+      backend_port: ${{ vars.BACKEND_PORT_DEV != '' && vars.BACKEND_PORT_DEV || '8000' }}
+      frontend_port: "3000"
+
+  deploy-prod:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/reusable-deploy.yml
+    with:
+      environment: prod
+      runner_label: prod-linux-arm
+      image_tag: ${{ github.sha }}
+      aws_secret_id: prod
+      image_name_backend: ${{ vars.IMAGE_NAME_BACKEND }}
+      image_name_frontend: ${{ vars.IMAGE_NAME_FRONTEND }}
+      image_name_model: ${{ vars.IMAGE_NAME_MODEL }}
+      stutter_model_port: ${{ vars.STUTTER_MODEL_PORT }}
+      api_url: ${{ vars.API_URL_PROD }}
+      frontend_origin: ${{ vars.FRONTEND_ORIGIN_PROD }}
+      backend_port: ${{ vars.BACKEND_PORT_PROD != '' && vars.BACKEND_PORT_PROD || '8000' }}
+      frontend_port: "3000"

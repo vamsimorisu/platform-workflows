@@ -1,0 +1,261 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [develop, main]
+
+env:
+  IMAGE_NAME_BACKEND: 
+  IMAGE_NAME_FRONTEND: 
+  
+  IMAGE_NAME_MODEL: 
+  STUTTER_MODEL_PORT: 
+  IMAGE_TAG: ${{ github.sha }}
+
+  # Public URLs. The API values are baked into the frontend bundle at build
+  # time; the frontend values are handed to the API as its CORS allow-list.
+  # These two must agree or every browser request is blocked.
+  API_URL_DEV:
+  API_URL_PROD: 
+  FRONTEND_ORIGIN_DEV: 
+  FRONTEND_ORIGIN_PROD:
+
+# Prevent concurrent deploys from clobbering each other.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy-dev:
+    name: Deploy (dev)
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+    runs-on: [dev-linux-arm]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend image (dev)
+        working-directory: ./apps/api
+        env:
+          environment: dev
+        run: |
+          aws secretsmanager get-secret-value --secret-id $environment --query SecretString --output text > .env
+          docker build -t ${{ env.IMAGE_NAME_BACKEND }}:${{ env.IMAGE_TAG }} . \
+            || { echo "Docker build failed"; exit 1; }
+          docker tag ${{ env.IMAGE_NAME_BACKEND }}:${{ env.IMAGE_TAG }} ${{ env.IMAGE_NAME_BACKEND }}:latest
+
+      # Database migrations are run MANUALLY against the real database.
+      # Deliberately not automated here — the database is shared with other
+      # applications. Run `npm run migrate --workspace=api` yourself before
+      # deploying anything that needs a schema change.
+
+      # The model's weights (1.26 GB) are their own image layer, pinned to a
+      # commit, so a rebuild only downloads them when the pinned revision changes.
+      #
+      # Neither model step can fail the deploy: the backend and frontend work
+      # without the model, so a model that will not build must not hold them
+      # back. If the new image fails, the previous model container keeps running.
+      - name: Build stutter model image (dev)
+        working-directory: ./apps/stutter-model
+        run: |
+          if docker build -t ${{ env.IMAGE_NAME_MODEL }}:${{ env.IMAGE_TAG }} .; then
+            docker tag ${{ env.IMAGE_NAME_MODEL }}:${{ env.IMAGE_TAG }} ${{ env.IMAGE_NAME_MODEL }}:latest
+          else
+            echo "::warning::The stutter model image did not build; the previous one stays in place."
+          fi
+
+      - name: Run stutter model container (dev)
+        run: |
+          # Started before the backend, which calls it; the backend runs
+          # without it too, leaving the audio model out of the count.
+          if ! docker image inspect ${{ env.IMAGE_NAME_MODEL }}:${{ env.IMAGE_TAG }} > /dev/null 2>&1; then
+            echo "::warning::No new stutter model image; leaving the running one alone."
+            exit 0
+          fi
+          docker rm -f ${{ env.IMAGE_NAME_MODEL }} || true
+          sleep 2
+          docker run -d --name ${{ env.IMAGE_NAME_MODEL }} --network host \
+            --restart unless-stopped \
+            -e PORT=${{ env.STUTTER_MODEL_PORT }} \
+            ${{ env.IMAGE_NAME_MODEL }}:${{ env.IMAGE_TAG }} \
+            || echo "::warning::The stutter model container did not start."
+
+      - name: Run backend container (dev)
+        working-directory: ./apps/api
+        run: |
+          # --network host so the container can reach VPC resources (RDS).
+          # CMD honors PORT, so backend binds 0.0.0.0:8026 on the host.
+          #
+          # ALLOWED_ORIGINS is set explicitly rather than left to the secret:
+          # without the browser's origin in this list every request is blocked
+          # by CORS, which surfaces in the UI as "Can't reach the server" even
+          # though the API is running perfectly. -e overrides --env-file.
+          docker rm -f ${{ env.IMAGE_NAME_BACKEND }} || true
+          sleep 2
+          docker run -d --name ${{ env.IMAGE_NAME_BACKEND }} --network host \
+            --env-file .env -e PORT= \
+            -e ALLOWED_ORIGINS=${{ env.FRONTEND_ORIGIN_DEV }} \
+            -e STUTTER_MODEL_URL=http://#potr no:${{ env.STUTTER_MODEL_PORT }} \
+            ${{ env.IMAGE_NAME_BACKEND }}:${{ env.IMAGE_TAG }}
+
+      - name: Build frontend image (dev)
+        run: |
+          # Build context is the REPO ROOT, not apps/web — the web app depends on
+          # the @saylo/screening workspace package, which lives outside its folder.
+          # NEXT_PUBLIC_* is inlined into the client bundle at build time, so the
+          # API URL has to be a build arg rather than a runtime env var.
+          docker build \
+            -f apps/web/Dockerfile \
+            --build-arg NEXT_PUBLIC_API_URL=${{ env.API_URL_DEV }} \
+            -t ${{ env.IMAGE_NAME_FRONTEND }}:${{ env.IMAGE_TAG }} . \
+            || { echo "Docker build failed"; exit 1; }
+          docker tag ${{ env.IMAGE_NAME_FRONTEND }}:${{ env.IMAGE_TAG }} ${{ env.IMAGE_NAME_FRONTEND }}:latest
+
+      - name: Run frontend container (dev)
+        run: |
+          docker rm -f ${{ env.IMAGE_NAME_FRONTEND }} || true
+          docker run -d --name ${{ env.IMAGE_NAME_FRONTEND }} -p 3000:3000 \
+            ${{ env.IMAGE_NAME_FRONTEND }}:${{ env.IMAGE_TAG }}
+
+      - name: Smoke check (dev)
+        run: |
+          # /health/db, NOT /health. /health never touches the database, so a
+          # wrong DATABASE_URL_TEMP would deploy green and only fail once a user
+          # loaded a page — the engine is created lazily on first query.
+          for i in $(seq 1 20); do
+            if curl -fsS http://localhost:8000/health/db > /dev/null \
+               && curl -fsS http://localhost:3000 > /dev/null; then
+              echo "backend :8000 (db reachable) and frontend :3000 are up"
+              curl -fsS http://localhost:8000/health/db
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "Services did not come up, or the API could not reach the database"
+          docker logs --tail 50 ${{ env.IMAGE_NAME_BACKEND }} || true
+          docker logs --tail 50 ${{ env.IMAGE_NAME_FRONTEND }} || true
+          exit 1
+
+      # WARNS, never fails the deploy: the backend runs without the model, and
+      # a slow model load must not hold back a release that works.
+      - name: Stutter model check (warning only)
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://#port no:${{ env.STUTTER_MODEL_PORT }}/health; then
+              echo " — stutter model is up"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::warning::The stutter model is not answering on :${{ env.STUTTER_MODEL_PORT }}. The backend runs without it; the audio model is left out of stuttering counts until it is up."
+          docker logs --tail 50 ${{ env.IMAGE_NAME_MODEL }} || true
+
+      - name: Cleanup dangling images
+        if: always()
+        run: docker image prune -f || true
+
+  #build-and-deploy-prod:
+    name: Deploy (prod)
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: [prod-linux-arm]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend image (prod)
+        working-directory: ./apps/api
+        env:
+          environment: prod
+        run: |
+          aws secretsmanager get-secret-value --secret-id $environment --query SecretString --output text > .env
+          docker build -t ${{ env.IMAGE_NAME_BACKEND }}:${{ env.IMAGE_TAG }} . \
+            || { echo "Docker build failed"; exit 1; }
+          docker tag ${{ env.IMAGE_NAME_BACKEND }}:${{ env.IMAGE_TAG }} ${{ env.IMAGE_NAME_BACKEND }}:latest
+
+      # Migrations are run manually — see the note in the dev job.
+
+      # Neither model step can fail the deploy — see the dev job.
+      - name: Build stutter model image (prod)
+        working-directory: ./apps/stutter-model
+        run: |
+          if docker build -t ${{ env.IMAGE_NAME_MODEL }}:${{ env.IMAGE_TAG }} .; then
+            docker tag ${{ env.IMAGE_NAME_MODEL }}:${{ env.IMAGE_TAG }} ${{ env.IMAGE_NAME_MODEL }}:latest
+          else
+            echo "::warning::The stutter model image did not build; the previous one stays in place."
+          fi
+
+      - name: Run stutter model container (prod)
+        run: |
+          if ! docker image inspect ${{ env.IMAGE_NAME_MODEL }}:${{ env.IMAGE_TAG }} > /dev/null 2>&1; then
+            echo "::warning::No new stutter model image; leaving the running one alone."
+            exit 0
+          fi
+          docker rm -f ${{ env.IMAGE_NAME_MODEL }} || true
+          sleep 2
+          docker run -d --name ${{ env.IMAGE_NAME_MODEL }} --network host \
+            --restart unless-stopped \
+            -e PORT=${{ env.STUTTER_MODEL_PORT }} \
+            ${{ env.IMAGE_NAME_MODEL }}:${{ env.IMAGE_TAG }} \
+            || echo "::warning::The stutter model container did not start."
+
+      - name: Run backend container (prod)
+        working-directory: ./apps/api
+        run: |
+          # ALLOWED_ORIGINS set explicitly — see the note in the dev job.
+          docker rm -f ${{ env.IMAGE_NAME_BACKEND }} || true
+          sleep 2
+          docker run -d --name ${{ env.IMAGE_NAME_BACKEND }} --network host \
+            --env-file .env -e PORT=8026 \
+            -e ALLOWED_ORIGINS=${{ env.FRONTEND_ORIGIN_PROD }} \
+            -e STUTTER_MODEL_URL=http://#port no:${{ env.STUTTER_MODEL_PORT }} \
+            ${{ env.IMAGE_NAME_BACKEND }}:${{ env.IMAGE_TAG }}
+
+      - name: Build frontend image (prod)
+        run: |
+          docker build \
+            -f apps/web/Dockerfile \
+            --build-arg NEXT_PUBLIC_API_URL=${{ env.API_URL_PROD }} \
+            -t ${{ env.IMAGE_NAME_FRONTEND }}:${{ env.IMAGE_TAG }} . \
+            || { echo "Docker build failed"; exit 1; }
+          docker tag ${{ env.IMAGE_NAME_FRONTEND }}:${{ env.IMAGE_TAG }} ${{ env.IMAGE_NAME_FRONTEND }}:latest
+
+      - name: Run frontend container (prod)
+        run: |
+          docker rm -f ${{ env.IMAGE_NAME_FRONTEND }} || true
+          docker run -d --name ${{ env.IMAGE_NAME_FRONTEND }} -p 3000:3000 \
+            ${{ env.IMAGE_NAME_FRONTEND }}:${{ env.IMAGE_TAG }}
+
+      - name: Smoke check (prod)
+        run: |
+          # /health/db, not /health — see the note in the dev job.
+          for i in $(seq 1 20); do
+            if curl -fsS http://localhost:8000/health/db > /dev/null \
+               && curl -fsS http://localhost:3000 > /dev/null; then
+              echo "backend :8000 (db reachable) and frontend :3000 are up"
+              curl -fsS http://localhost:8000/health/db
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "Services did not come up, or the API could not reach the database"
+          docker logs --tail 50 ${{ env.IMAGE_NAME_BACKEND }} || true
+          docker logs --tail 50 ${{ env.IMAGE_NAME_FRONTEND }} || true
+          exit 1
+
+      # WARNS, never fails the deploy: the backend runs without the model, and
+      # a slow model load must not hold back a release that works.
+      - name: Stutter model check (warning only)
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://#port no:${{ env.STUTTER_MODEL_PORT }}/health; then
+              echo " — stutter model is up"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::warning::The stutter model is not answering on :${{ env.STUTTER_MODEL_PORT }}. The backend runs without it; the audio model is left out of stuttering counts until it is up."
+          docker logs --tail 50 ${{ env.IMAGE_NAME_MODEL }} || true
+
+      - name: Cleanup dangling images
+        if: always()
+        run: docker image prune -f || tru
