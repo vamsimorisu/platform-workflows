@@ -22,4 +22,5 @@ jobs:
       language: python
       docker-enabled: true
       deploy-enabled: false
+      #test-command: "echo 'Skipping tests in CI'"
     secrets: inherit
