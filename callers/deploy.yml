@@ -11,7 +11,7 @@ jobs:
       api_url: "https://api.staging.myapp.com"
       backend_port: 4000
       frontend_port: 3000
-      extra_env: |
-        DATABASE_URL=${{ secrets.DATABASE_URL }}
-        FEATURE_FLAG_NEW_UI=true
+      #extra_env: |
+       # DATABASE_URL=${{ secrets.DATABASE_URL }}
+       # FEATURE_FLAG_NEW_UI=true
     secrets: inherit
