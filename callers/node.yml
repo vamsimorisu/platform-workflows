@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   pipeline:
-    uses: vamsimorisu/platform-workflows/.github/workflows/ci-cd.yml@v1
+    uses: vamsimorisu/platform-workflows/.github/workflows/ci-cd.yml@develop
     with:
       language: node
       docker-enabled: true

@@ -1,0 +1,17 @@
+jobs:
+  deploy:
+    uses: vamsimorisu/platform-workflows/.github/workflows/deploy.yml@develop
+    with:
+      environment: "staging"
+      runner_label: "ubuntu-latest"
+      aws_secret_id: "staging-backend-secret"
+      image_name_backend: "org/backend-service"
+      image_name_frontend: "org/frontend-service"
+      frontend_origin: "https://staging.myapp.com"
+      api_url: "https://api.staging.myapp.com"
+      backend_port: 4000
+      frontend_port: 3000
+      extra_env: |
+        DATABASE_URL=${{ secrets.DATABASE_URL }}
+        FEATURE_FLAG_NEW_UI=true
+    secrets: inherit
