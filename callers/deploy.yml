@@ -1,4 +1,21 @@
-jobs:
+
+name: deploy
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled, ready_for_review]
+  push:
+    branches: [main,develop]
+    tags: ["v*"]
+
+# The reusable workflow can never exceed these, so callers must grant them.
+permissions:
+  contents: read
+  pull-requests: write
+  packages: write
+  id-token: write
+  security-events: write
+  jobs:
   deploy:
     uses: vamsimorisu/platform-workflows/.github/workflows/deploy.yml@develop
     with:
