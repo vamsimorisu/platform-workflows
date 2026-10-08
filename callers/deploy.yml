@@ -1,34 +1,83 @@
-
-name: deploy
+name: Deploy
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, edited, labeled, unlabeled, ready_for_review]
   push:
-    branches: [main,develop]
-    tags: ["v*"]
+    branches: [develop, main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Deployment environment"
+        type: choice
+        options: [dev, prod]
+        default: dev
+      image_name_backend:
+        description: "Backend image/container name"
+        type: string
+        default: repob-backend
+      image_name_frontend:
+        description: "Frontend image/container name"
+        type: string
+        default: repob-frontend
+      backend_port:
+        description: "Backend port (unique on the runner)"
+        type: number
+        default: 8000
+      frontend_port:
+        description: "Frontend port (unique on the runner)"
+        type: number
+        default: 3000
+      image_tag:
+        description: "Image tag (blank = commit SHA)"
+        type: string
+        default: ""
 
-# The reusable workflow can never exceed these, so callers must grant them.
-permissions:
-  contents: read
-  pull-requests: write
-  packages: write
-  id-token: write
-  security-events: write
-  jobs:
-  deploy:
-    uses: vamsimorisu/platform-workflows/.github/workflows/deploy.yml@develop
+jobs:
+  # Resolve the environment once: manual choice, else main -> prod, anything else -> dev
+  config:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+    steps:
+      - id: env
+        run: |
+          if [ -n "${{ inputs.environment }}" ]; then
+            echo "environment=${{ inputs.environment }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "environment=prod" >> "$GITHUB_OUTPUT"
+          else
+            echo "environment=dev" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy-dev:
+    needs: config
+    if: needs.config.outputs.environment == 'dev'
+    uses: vamsimorisu/platform-workflows/.github/workflows/deploy-services.yml@develop
     with:
-      environment: "staging"
-      runner_label: "ubuntu-latest"
-      aws_secret_id: "staging-backend-secret"
-      image_name_backend: "org/backend-service"
-      image_name_frontend: "org/frontend-service"
-      frontend_origin: "https://staging.myapp.com"
-      api_url: "https://api.staging.myapp.com"
-      backend_port: 4000
-      frontend_port: 3000
-      #extra_env: |
-       # DATABASE_URL=${{ secrets.DATABASE_URL }}
-       # FEATURE_FLAG_NEW_UI=true
+      environment: dev
+      runner_label: dev-linux
+      image_tag: ${{ inputs.image_tag || '' }}
+      aws_secret_id: repob/dev
+      image_name_backend: ${{ inputs.image_name_backend || 'repob-backend' }}
+      image_name_frontend: ${{ inputs.image_name_frontend || 'repob-frontend' }}
+      frontend_origin: https://dev.repob.example.com
+      api_url: https://dev-api.repob.example.com
+      backend_port: ${{ inputs.backend_port || 8000 }}
+      frontend_port: ${{ inputs.frontend_port || 3000 }}
+    secrets: inherit
+
+  deploy-prod:
+    needs: config
+    if: needs.config.outputs.environment == 'prod'
+    uses: vamsimorisu/platform-workflows/.github/workflows/deploy-services.yml@develop
+    with:
+      environment: prod
+      runner_label: prod-linux-arm
+      image_tag: ${{ inputs.image_tag || '' }}
+      aws_secret_id: repob/prod
+      image_name_backend: ${{ inputs.image_name_backend || 'repob-backend' }}
+      image_name_frontend: ${{ inputs.image_name_frontend || 'repob-frontend' }}
+      frontend_origin: https://repob.example.com
+      api_url: https://api.repob.example.com
+      backend_port: ${{ inputs.backend_port || 8000 }}
+      frontend_port: ${{ inputs.frontend_port || 3000 }}
     secrets: inherit
