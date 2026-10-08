@@ -1,0 +1,134 @@
+name: Deploy Service
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Deployment environment (e.g. staging, prod)"
+        required: true
+        type: string
+      runner_label:
+        description: "Runner label to use"
+        required: true
+        type: string
+      image_tag:
+        description: "Optional image tag (defaults to commit SHA)"
+        required: false
+        type: string
+      aws_secret_id:
+        description: "AWS Secrets Manager secret ID for backend env"
+        required: true
+        type: string
+      image_name_backend:
+        description: "Docker image name for backend"
+        required: true
+        type: string
+      image_name_frontend:
+        description: "Docker image name for frontend"
+        required: true
+        type: string
+      frontend_origin:
+        description: "Allowed CORS origin for backend"
+        required: true
+        type: string
+      api_url:
+        description: "API URL for frontend build"
+        required: true
+        type: string
+      backend_port:
+        description: "Port for backend service"
+        required: true
+        type: number
+      frontend_port:
+        description: "Port for frontend service"
+        required: true
+        type: number
+
+concurrency:
+  group: deploy-${{ inputs.environment }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy (${{ inputs.environment }})
+    runs-on: ${{ inputs.runner_label }}
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag != '' && inputs.image_tag || github.sha }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Build backend image
+      - name: Build backend image
+        working-directory: ./apps/api
+        env:
+          IMAGE_NAME_BACKEND: ${{ inputs.image_name_backend }}
+        run: |
+          aws secretsmanager get-secret-value --secret-id "${{ inputs.aws_secret_id }}" --query SecretString --output text > .env
+          docker build -t "${{ env.IMAGE_NAME_BACKEND }}:${{ env.IMAGE_TAG }}" . \
+            || { echo "Docker build failed"; exit 1; }
+          docker tag "${{ env.IMAGE_NAME_BACKEND }}:${{ env.IMAGE_TAG }}" "${{ env.IMAGE_NAME_BACKEND }}:latest"
+
+      # Run backend container
+      - name: Run backend container
+        working-directory: ./apps/api
+        env:
+          IMAGE_NAME_BACKEND: ${{ inputs.image_name_backend }}
+          FRONTEND_ORIGIN: ${{ inputs.frontend_origin }}
+          BACKEND_PORT: ${{ inputs.backend_port }}
+        run: |
+          docker rm -f "${{ env.IMAGE_NAME_BACKEND }}" || true
+          sleep 2
+          docker run -d --name "${{ env.IMAGE_NAME_BACKEND }}" --network host \
+            --env-file .env \
+            -e PORT="${{ env.BACKEND_PORT }}" \
+            -e ALLOWED_ORIGINS="${{ env.FRONTEND_ORIGIN }}" \
+            "${{ env.IMAGE_NAME_BACKEND }}:${{ env.IMAGE_TAG }}"
+
+      # Build frontend image
+      - name: Build frontend image
+        env:
+          IMAGE_NAME_FRONTEND: ${{ inputs.image_name_frontend }}
+          API_URL: ${{ inputs.api_url }}
+        run: |
+          docker build \
+            -f apps/web/Dockerfile \
+            --build-arg NEXT_PUBLIC_API_URL="${{ env.API_URL }}" \
+            -t "${{ env.IMAGE_NAME_FRONTEND }}:${{ env.IMAGE_TAG }}" . \
+            || { echo "Docker build failed"; exit 1; }
+          docker tag "${{ env.IMAGE_NAME_FRONTEND }}:${{ env.IMAGE_TAG }}" "${{ env.IMAGE_NAME_FRONTEND }}:latest"
+
+      # Run frontend container
+      - name: Run frontend container
+        env:
+          IMAGE_NAME_FRONTEND: ${{ inputs.image_name_frontend }}
+          FRONTEND_PORT: ${{ inputs.frontend_port }}
+        run: |
+          docker rm -f "${{ env.IMAGE_NAME_FRONTEND }}" || true
+          docker run -d --name "${{ env.IMAGE_NAME_FRONTEND }}" -p "${{ env.FRONTEND_PORT }}:3000" \
+            "${{ env.IMAGE_NAME_FRONTEND }}:${{ env.IMAGE_TAG }}"
+
+      # Smoke check
+      - name: Smoke check
+        env:
+          BACKEND_PORT: ${{ inputs.backend_port }}
+          FRONTEND_PORT: ${{ inputs.frontend_port }}
+        run: |
+          for i in $(seq 1 20); do
+            if curl -fsS "http://localhost:${{ env.BACKEND_PORT }}/health/db" > /dev/null \
+              && curl -fsS "http://localhost:${{ env.FRONTEND_PORT }}" > /dev/null; then
+              echo "backend :${{ env.BACKEND_PORT }} (db reachable) and frontend :${{ env.FRONTEND_PORT }} are up"
+              curl -fsS "http://localhost:${{ env.BACKEND_PORT }}/health/db"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "Services did not come up, or the API could not reach the database"
+          docker logs --tail 50 "${{ inputs.image_name_backend }}" || true
+          docker logs --tail 50 "${{ inputs.image_name_frontend }}" || true
+          exit 1
+
+      # Cleanup dangling images
+      - name: Cleanup dangling images
+        if: always()
+        run: docker image prune -f || true
