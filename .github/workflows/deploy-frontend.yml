@@ -1,0 +1,82 @@
+name: Deploy Frontend
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Deployment environment (e.g. dev, prod)"
+        required: true
+        type: string
+      runner_label:
+        description: "Runner label to use"
+        required: true
+        type: string
+      image_tag:
+        description: "Optional image tag (defaults to commit SHA)"
+        required: false
+        type: string
+        default: ""
+      image_name_frontend:
+        description: "Docker image/container name for frontend"
+        required: true
+        type: string
+      api_url:
+        description: "API URL for frontend build"
+        required: true
+        type: string
+      frontend_port:
+        description: "Host port for frontend service"
+        required: true
+        type: number
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-frontend-${{ github.repository }}-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy frontend (${{ inputs.environment }})
+    runs-on: ${{ inputs.runner_label }}
+    timeout-minutes: 30
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag != '' && inputs.image_tag || github.sha }}
+      IMAGE_NAME_FRONTEND: ${{ inputs.image_name_frontend }}
+      FRONTEND_PORT: ${{ inputs.frontend_port }}
+      API_URL: ${{ inputs.api_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build frontend image
+        run: |
+          docker build \
+            -f apps/web/Dockerfile \
+            --build-arg NEXT_PUBLIC_API_URL="$API_URL" \
+            -t "$IMAGE_NAME_FRONTEND:$IMAGE_TAG" .\
+            || { echo "Docker build failed"; exit 1; }
+          docker tag "$IMAGE_NAME_FRONTEND:$IMAGE_TAG" "$IMAGE_NAME_FRONTEND:latest"
+
+      - name: Run frontend container
+        run: |
+          docker rm -f "$IMAGE_NAME_FRONTEND" || true
+          docker run -d --name "$IMAGE_NAME_FRONTEND" -p "$FRONTEND_PORT:3000" \
+            "$IMAGE_NAME_FRONTEND:$IMAGE_TAG"
+
+      - name: Smoke check frontend
+        run: |
+          for i in $(seq 1 20); do
+            if curl -fsS "http://localhost:$FRONTEND_PORT" > /dev/null; then
+              echo "Frontend :$FRONTEND_PORT is up"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "Frontend did not become healthy"
+          docker logs --tail 50 "$IMAGE_NAME_FRONTEND" || true
+          exit 1
+
+      - name: Cleanup dangling images
+        if: always()
+        run: docker image prune -f || true

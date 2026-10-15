@@ -1,0 +1,89 @@
+name: Deploy Backend
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Deployment environment (e.g. dev, prod)"
+        required: true
+        type: string
+      runner_label:
+        description: "Runner label to use"
+        required: true
+        type: string
+      image_tag:
+        description: "Optional image tag (defaults to commit SHA)"
+        required: false
+        type: string
+        default: ""
+      aws_secret_id:
+        description: "AWS Secrets Manager secret ID for backend env"
+        required: true
+        type: string
+      image_name_backend:
+        description: "Docker image/container name for backend"
+        required: true
+        type: string
+      frontend_origin:
+        description: "Allowed CORS origin for backend"
+        required: true
+        type: string
+      backend_port:
+        description: "Host port for backend service"
+        required: true
+        type: number
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-backend-${{ github.repository }}-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy backend (${{ inputs.environment }})
+    runs-on: ${{ inputs.runner_label }}
+    timeout-minutes: 30
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag != '' && inputs.image_tag || github.sha }}
+      IMAGE_NAME_BACKEND: ${{ inputs.image_name_backend }}
+      BACKEND_PORT: ${{ inputs.backend_port }}
+      FRONTEND_ORIGIN: ${{ inputs.frontend_origin }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend image
+        working-directory: ./apps/api
+        run: |
+          docker build -t "$IMAGE_NAME_BACKEND:$IMAGE_TAG" .
+          docker tag "$IMAGE_NAME_BACKEND:$IMAGE_TAG" "$IMAGE_NAME_BACKEND:latest"
+
+      - name: Run backend container
+        working-directory: ./apps/api
+        run: |
+          docker rm -f "$IMAGE_NAME_BACKEND" || true
+          sleep 2
+          docker run -d --name "$IMAGE_NAME_BACKEND" --network host \
+            --env-file .env \
+            -e PORT="$BACKEND_PORT" \
+            -e ALLOWED_ORIGINS="$FRONTEND_ORIGIN" \
+            "$IMAGE_NAME_BACKEND:$IMAGE_TAG"
+
+      - name: Smoke check backend
+        run: |
+          for i in $(seq 1 20); do
+            if curl -fsS "http://localhost:$BACKEND_PORT/health/db" > /dev/null; then
+              echo "Backend :$BACKEND_PORT is up and can reach the database"
+              curl -fsS "http://localhost:$BACKEND_PORT/health/db"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "Backend did not become healthy or could not reach the database"
+          docker logs --tail 50 "$IMAGE_NAME_BACKEND" || true
+          exit 1
+
+      - name: Cleanup dangling images
+        if: always()
+        run: docker image prune -f || true

@@ -1,6 +1,6 @@
 # platform-workflows
 
-Org-wide reusable CI/CD for Python and Node.js repos: PR contract, PR advisory, lint/test/build, Docker, environment-gated deploy.
+Org-wide reusable CI/CD for Python and Node.js repos: PR contract, PR advisory, workflow linting, code lint/test/build, Docker, environment-gated deploy.
 
 ## Publish (one time)
 
@@ -33,10 +33,40 @@ jobs:
 | `deploy-enabled`, `deploy-command` | `false`, empty | Deploy on `main` to staging or on `v*` tags to production; set a repository-specific command |
 | `required-labels-any`, `allowed-base-branches`, `branch-pattern`, `title-pattern`, `require-reviewer` | see workflow | PR contract |
 
+In CI, test failures emit a warning and the build still runs; lint and build failures remain blocking.
+
 ## Secrets and variables
 
 - Optional secrets: `REGISTRY_USERNAME`, `REGISTRY_PASSWORD`, `SLACK_WEBHOOK_URL` (org level, selected repos).
 - Cloud auth uses OIDC. Set environment variables `DEPLOY_ROLE_ARN` and `AWS_REGION` per environment. Swap the auth step for Azure or GCP if needed.
+
+## Deploy frontend and backend separately
+
+Use `deploy-backend.yml` or `deploy-frontend.yml` as separate reusable workflow calls. Both accept `environment`, `runner_label`, and an optional `image_tag`; backend deployment also requires `aws_secret_id`, `image_name_backend`, `frontend_origin`, and `backend_port`; frontend deployment requires `image_name_frontend`, `api_url`, and `frontend_port`.
+
+```yaml
+jobs:
+  deploy-backend:
+    uses: your-org/platform-workflows/.github/workflows/deploy-backend.yml@v1
+    with:
+      environment: dev
+      runner_label: dev-linux
+      aws_secret_id: repob/dev
+      image_name_backend: repob-backend
+      frontend_origin: https://dev.repob.example.com
+      backend_port: 8000
+
+  deploy-frontend:
+    uses: your-org/platform-workflows/.github/workflows/deploy-frontend.yml@v1
+    with:
+      environment: dev
+      runner_label: dev-linux
+      image_name_frontend: repob-frontend
+      api_url: https://dev-api.repob.example.com
+      frontend_port: 3000
+```
+
+Call either job on its own to deploy only that service. The existing `deploy-services.yml` remains available for deploying both services together.
 
 ## Versioning
 
@@ -53,9 +83,11 @@ Semver tags plus a floating `vN`. Callers use `@v1`, or a full SHA for regulated
 | `ci-cd.yml` | Orchestrator, the only entrypoint callers reference |
 | `pr-contract.yml` | Blocking: title, branch, base, labels, description, reviewer |
 | `pr-advisory.yml` | Non-blocking PR guidance and dependency review |
-| `ci.yml` | Lint, test, build for Python or Node |
+| `ci.yml` | Lint GitHub Actions workflows; lint, test, and build Python or Node code |
 | `docker.yml` | Buildx build, push (non-PR only), Trivy scan, outputs digest |
 | `deploy.yml` | Environment-gated OIDC deploy (`staging` on main, `production` on tags) |
+| `deploy-backend.yml`, `deploy-frontend.yml` | Deploy backend or frontend independently |
+| `deploy-services.yml` | Deploy backend and frontend together |
 | `selftest.yml`, `release.yml` | Repo's own tests and tagging |
 
 Stage workflows can also be called directly, e.g. `uses: your-org/platform-workflows/.github/workflows/ci.yml@v1`, for repos that only want part of the pipeline.
