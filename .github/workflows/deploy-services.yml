@@ -59,7 +59,8 @@ jobs:
       BACKEND_PORT: ${{ inputs.backend_port }}
       FRONTEND_PORT: ${{ inputs.frontend_port }}
       FRONTEND_ORIGIN: ${{ inputs.frontend_origin }}
-      API_URL: ${{ inputs.api_url }}
+      API_URL: ${{ inputs.api_url }}el }}
+    
 
     steps:
       - uses: actions/checkout@v4
